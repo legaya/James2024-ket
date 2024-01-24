@@ -1,2 +1,2 @@
 # scm_oce
-# Author : Florian Lemarié and Alexandre Legay
+# Authors: Florian Lemarié and Alexandre Legay
