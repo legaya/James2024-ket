@@ -19,10 +19,10 @@ contains
                        eps     ,      &            ! TKE dissipation [m2/s3]
                        rho0    ,      &            ! Reference constant density [kg/m3]
                        rho1    ,      &            ! Density perturbation [kg/m3]
-                       Akv     ,      &            ! Turbulent viscosity  [m2/s]
+                       Akm     ,      &            ! Turbulent viscosity  [m2/s]
                        Akt     ,      &            ! Turbulent diffusivity [m2/s]
                        wx_NL_KPP,     &            ! KPP non local flux ([C m/s] or [psu m/s])
-                       c_mu    ,      &            ! Stability function for u,v (GLS), Coeff in the akv equation (TKE)
+                       c_mu    ,      &            ! Stability function for u,v (GLS), Coeff in the akm equation (TKE)
                        c_mu_prime ,   &            ! Stability function for T,S (GLS), Coeff in the akt equation (TKE)
                        alpha_n,       &            ! Relative to the stratification (Coeff in stability functions)
                        alpha_m,       &            ! Relative to the shear of mean currents (Coeff in stability functions)
@@ -74,7 +74,7 @@ contains
          real(8),dimension( 1:N, ntime      ), intent(inout) :: u
          real(8),dimension( 1:N, ntime      ), intent(inout) :: v
          real(8),dimension( 1:N, ntime, ntra), intent(inout) :: t
-         real(8),dimension( 0:N             ), intent(inout) :: Akv
+         real(8),dimension( 0:N             ), intent(inout) :: Akm
          real(8),dimension( 0:N, ntra       ), intent(inout) :: Akt
          real(8),dimension( 0:N, ntra       ), intent(inout) :: wx_NL_KPP
          real(8),dimension( 1:N             ), intent(inout) :: rho1
@@ -108,11 +108,11 @@ contains
          real(8)                                      ::  sig,cff, cff1, cff2, cff3
          real(8)                                      ::  FC(0:N), CF(0:N), Rz(1:N)
          real(8)                                      ::  swr_frac(0:N),stflx(2)
-         real(8),parameter                            :: cp = 3985.0d0
+         real(8),parameter                            :: cp = 4000.0d0
          real(8), parameter :: nuwm =1.0e-4     !<-- minimum turbulent viscosity
          real(8), parameter :: nuws =0.1e-4     !<-- minimum turbulent diffusion
          real(8)  :: c1,c2,c3,c4,c5,c6,cb1,cb2,cb3,cb4,cb5,cbb
-         real(8),dimension( 0:N             )  :: Akv_tmp
+         real(8),dimension( 0:N             )  :: Akm_tmp
          real(8),dimension( 0:N, ntra       )  :: Akt_tmp
 
          !+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
@@ -149,22 +149,22 @@ contains
 
          SELECT CASE(trb_scheme)
          CASE(0)
-            call  lmd_vmix   (N, Akv ,Akt, u(:,nstp),v(:,nstp),rho1,bvf,z_r)
-            call  lmd_kpp    (N, Akv, Akt, hbls, u(:,nstp),v(:,nstp), t(:,nstp,:), bvf, &
+            call  lmd_vmix   (N, Akm ,Akt, u(:,nstp),v(:,nstp),rho1,bvf,z_r)
+            call  lmd_kpp    (N, Akm, Akt, hbls, u(:,nstp),v(:,nstp), t(:,nstp,:), bvf, &
                                    z_r,z_w,Hz,Ricr,f,sustr,svstr,srflx,stflx,rho0,swr_frac,ghat )
-            !call  lmd_bkpp   (N, Akv, Akt, hbls, u(:,nstp),v(:,nstp),bvf,z_r,z_w,Hz,Ricr,f,r_D,Zob)
+            !call  lmd_bkpp   (N, Akm, Akt, hbls, u(:,nstp),v(:,nstp),bvf,z_r,z_w,Hz,Ricr,f,r_D,Zob)
          CASE(4)
-            call  lmd_vmix   (N, Akv ,Akt, u(:,nstp),v(:,nstp),rho1,bvf,z_r)
-            call  lmd_kpp_LMD94    (N, Akv, Akt, hbls, u(:,nstp),v(:,nstp), t(:,nstp,:), bvf, rho1, &
+            call  lmd_vmix   (N, Akm ,Akt, u(:,nstp),v(:,nstp),rho1,bvf,z_r)
+            call  lmd_kpp_LMD94    (N, Akm, Akt, hbls, u(:,nstp),v(:,nstp), t(:,nstp,:), bvf, rho1, &
                                    z_r,z_w,Hz,Ricr,f,sustr,svstr,srflx,stflx,rho0,swr_frac,ghat )
-            !call  lmd_bkpp_LMD94(N,Akv,Akt,hbls,u(:,nstp),v(:,nstp),bvf,rho0,rho1,z_r,z_w,Hz,Ricr,f,r_D,Zob)
+            !call  lmd_bkpp_LMD94(N,Akm,Akt,hbls,u(:,nstp),v(:,nstp),bvf,rho0,rho1,z_r,z_w,Hz,Ricr,f,r_D,Zob)
          CASE(5)
-            call  tke_stp(Hz,z_r,u,v,bvf,turb(:,:,1),turb(:,:,2),lmix,eps,Akv,Akt,c_mu,c_mu_prime,r_D,sustr,svstr,      &
+            call  tke_stp(Hz,z_r,u,v,bvf,turb(:,:,1),turb(:,:,2),lmix,eps,Akm,Akt,c_mu,c_mu_prime,r_D,sustr,svstr,      &
                                           dt,Zob,Neu_bot,EVD,nstp,nnew,N,ntra,ngls,ntime)
             !remark: turb(:,:,2) = k/leps = eps/ceps/k**(1/2)
             ghat(0:N) = 0.d0
          CASE DEFAULT
-            call  gls_stp_DG(Hz,u,v,bvf,turb,lmix,eps,Akv,Akt,c_mu,c_mu_prime,alpha_n,alpha_m,r_D,sustr,svstr,      &
+            call  gls_stp_DG(Hz,u,v,bvf,turb,lmix,eps,Akm,Akt,c_mu,c_mu_prime,alpha_n,alpha_m,r_D,sustr,svstr,      &
                       trb_scheme,sfunc_opt,dt,Zob,Neu_bot,kt,nstp,nnew,N,ntra,ngls,ntime)
             ghat(0:N) = 0.d0                                                      ! no non-local term for GLS
             !remark: turb(:,:,2) = psi
@@ -181,7 +181,7 @@ contains
   !-----------
             if (itrc.eq.1) then
                FC(N)=stflx(itrc)     ! <-- net surface heat flux, i.e. including latent and solar components
-               
+
                do k=N-1,1,-1
                  !FC(k)=srflx*swr_frac(k)-(stflx(1)-srflx)*ghat(k)    !<-- penetration of solar heat flux + application NL KPP (signe initial)
                  FC(k)=srflx*swr_frac(k)+(stflx(1)-srflx)*ghat(k)    !<-- penetration of solar heat flux + application NL KPP (signe que je pense etre le bon)
@@ -281,13 +281,13 @@ contains
   !
   ! Resolve tri-diagonal system
   !------
-          FC(1)=2.D0*dt*Akv(1)/(Hz(2)+Hz(1)) !<--     c(1)     ! system
+          FC(1)=2.D0*dt*Akm(1)/(Hz(2)+Hz(1)) !<--     c(1)     ! system
           cff=1./(Hz(1)+FC(1)+dt*r_D)        !<-- 1 / b(1) implicit bottom drag appears here
           CF(1)=cff*FC(1)                    !<-- q(1)
           u(1,nnew)=cff*u(1,nnew)
           v(1,nnew)=cff*v(1,nnew)
           do k=2,N-1
-            FC(k)=2.D0*dt*Akv(k)/(Hz(k+1)+Hz(k))
+            FC(k)=2.D0*dt*Akm(k)/(Hz(k+1)+Hz(k))
             cff=1.D0/(Hz(k)+FC(k)+FC(k-1)*(1.D0-CF(k-1)))
             CF(k)=cff*FC(k)
             u(k,nnew)=cff*(u(k,nnew)+FC(k-1)*u(k-1,nnew))
@@ -307,13 +307,13 @@ contains
          !+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
   !
   ! Compute hbls for diagnostics
-          Akv_tmp(:  ) = nuwm
+          Akm_tmp(:  ) = nuwm
           Akt_tmp(:,1) = nuws
           Akt_tmp(:,2) = nuws
           if (ntra>2) then
              Akt_tmp(:,2:ntra) = nuws
           endif
-          call  lmd_kpp_LMD94    (N, Akv_tmp, Akt_tmp, hbls, u(:,nstp),v(:,nstp), t(:,nstp,:), bvf, rho1, &
+          call  lmd_kpp_LMD94    (N, Akm_tmp, Akt_tmp, hbls, u(:,nstp),v(:,nstp), t(:,nstp,:), bvf, rho1, &
                                    z_r,z_w,Hz,0.25,f,sustr,svstr,srflx,stflx,rho0,swr_frac,ghat )
   !
 
@@ -435,7 +435,8 @@ contains
   !-------
         do k=1,N
   !----
-           rho1(k)= rho0*( 1. - Tcoef*( t(k,1) - T0 ) + Scoef*( t(k,2) - S0 ))
+           !rho1(k)= rho0*( 1. - Tcoef*( t(k,1) - T0 ) + Scoef*( t(k,2) - S0 ))
+           rho1(k)= rho0*( 1. - Tcoef*( t(k,1) - T0 ) + Scoef*( t(k,2) - S0 )) -1000.d0   ! NEW: for really defining the density anomaly
   !----
       enddo
   !----
@@ -498,7 +499,7 @@ contains
         r1(4)=0.77     ! r2=1-r1);
         r1(5)=0.78
                        ! set Jerlov water type to assign everywhere
-        Jwt=1          ! (an integer from 1 to 5).
+        Jwt=3          ! (an integer from 1 to 5).
 
         attn1=-1./mu1(Jwt)
         attn2=-1./mu2(Jwt)
@@ -549,7 +550,7 @@ contains
         real(8),intent(out) :: sustr,svstr,srflx
         real(8),intent(out) :: stflx1,stflx2
         real(8)             :: td,cff2,cff,dqdt,tdays
-        real(8),parameter   :: cp = 3985.0d0
+        real(8),parameter   :: cp = 4000.0d0
         integer             :: kt,k1,k2
 
 

@@ -12,7 +12,7 @@ subroutine gls_stp_DG( Hz      ,      &            ! Cell thickness           [m
                     trb     ,      &            ! GLS variables TKE + length scale
                     lmix    ,      &            ! mixing length scale [m]
                     eps     ,      &            ! TKE dissipation [m2/s3]
-                    Akv     ,      &            ! Turbulent viscosity  [m2/s]
+                    Akm     ,      &            ! Turbulent viscosity  [m2/s]
                     Akt     ,      &            ! Turbulent diffusivity [m2/s]
                     c_mu    ,      &            ! Stability function for u,v
                     c_mu_prime ,   &            ! Stability function for T,S
@@ -43,7 +43,7 @@ subroutine gls_stp_DG( Hz      ,      &            ! Cell thickness           [m
        real(8),dimension( 1:N, ntime      ), intent(in   ) :: u
        real(8),dimension( 1:N, ntime      ), intent(in   ) :: v
        real(8),dimension( 0:N             ), intent(in   ) :: bvf
-       real(8),dimension( 0:N             ), intent(inout) :: Akv
+       real(8),dimension( 0:N             ), intent(inout) :: Akm
        real(8),dimension( 0:N, ntra       ), intent(inout) :: Akt
        real(8),dimension( 0:N, ntime, ngls), intent(inout) :: trb
        real(8),dimension( 0:N             ), intent(inout) :: lmix
@@ -69,7 +69,7 @@ subroutine gls_stp_DG( Hz      ,      &            ! Cell thickness           [m
        real(8)   :: CF(1:N-1)
        real(8)   :: RH(1:N-1)
        real(8)   :: rp,    rm,    rn                !<-- n,m and p exponents
-       real(8)   :: beta1, beta2, beta3m, beta3p    !<-- beta terms for the psi equation
+       real(8)   :: beta1, beta2, beta3_positiveN2, beta3_negativeN2    !<-- beta terms for the psi equation
        real(8)   :: OneOverSig(2)                   !<-- inverse of Schmidt number for tke and psi
        real(8)   :: e1,e2,e3
        real(8)   :: c1   ,c2    ,c3    ,c4    ,c5
@@ -79,7 +79,7 @@ subroutine gls_stp_DG( Hz      ,      &            ! Cell thickness           [m
        real(8)   :: sf_n0T,sf_n1T,sf_n2T
        real(8)   :: lim_am0,lim_am1,lim_am2,lim_am3,lim_am4,lim_am5,lim_am6
        real(8)   :: z0_s,ustar_sfc_sq,ustar_bot_sq,L_lim,z0_b,trb_min(2)
-       real(8)   :: cff,cff1,cff2,cff3m,cff3p,lgthsc,flux_top,flux_bot,trb_sfc,trb_bot
+       real(8)   :: cff,cff1,cff2,cff3_positiveN2,cff3_negativeN2,lgthsc,flux_top,flux_bot,trb_sfc,trb_bot
        real(8)   :: invk       , invG       , Bprod , Sprod    , epsilon
        real(8)   :: Denom, gls_min
        real(8)   :: alpha_n_min, alpha_m_max, cm0   , cm0inv2  , gls, du, dv
@@ -98,21 +98,22 @@ subroutine gls_stp_DG( Hz      ,      &            ! Cell thickness           [m
        SELECT CASE( gls_scheme )
        CASE(1)     ! k-omega
           rp    = -1.0 ; rm    = 0.5  ; rn     = -1.0
-          beta1 = 0.555; beta2 = 0.833; beta3m = -0.6; beta3p = 1.0
+          beta1 = 0.555; beta2 = 0.833; beta3_positiveN2 = -0.6; beta3_negativeN2 = 1.0
           OneOverSig = (/ 0.5, 0.5 /)
        CASE(2)     ! k-epsilon
           rp    = 3.0 ; rm    = 1.5 ; rn     = -1.0
-          beta1 = 1.44; beta2 = 1.92; beta3m = -0.65; beta3p = -0.65
+          !beta1 = 1.44; beta2 = 1.92; beta3_positiveN2 = -0.65; beta3_negativeN2 = -0.65
+          beta1 = 1.44; beta2 = 1.92; beta3_positiveN2 = -0.65; beta3_negativeN2 = 1.0
           OneOverSig = (/ 1.0, 0.8333 /)
           ! NEW
-          ! 1) beta3m: -0.4 => -0.65, value -0.65 : calculated from my side according to Umlauf 2003b ("Extending the K-omega turbulence..."). Or also (cf Umlauf 2005 or Warner 2005 for reported values)
-          ! 2) beta3p = 1.0 => -0.65, better to take beta3p = beta3m, cf Umlauf 2005
+          ! 1) beta3_positiveN2: -0.4 => -0.65, value -0.65 : calculated from my side according to Umlauf 2003b ("Extending the K-omega turbulence..."). Or also (cf Umlauf 2005 or Warner 2005 for reported values)
+          ! 2) beta3_negativeN2 = 1.0 => -0.65, better to take beta3_negativeN2 = beta3_positiveN2, cf Umlauf 2005
           ! 3) OneOverSig = (/ 1.0, 0.7692 /)  =>  (/ 1.0, 0.8333 /)
           !    =>  0.7692 = 1/1.3    (sigma_epsilon = 1.3 is the value reported in Warner2005)
           !    =>  0.8333 = 1/1.2    (sigma_epsilon = 1.2 is the value found with (14) of Umlauf2003 with our value of c_mu0)
        CASE(3) ! gen-model
           rp    = 0.0; rm    = 1.0 ; rn     = -0.67
-          beta1 = 1.0; beta2 = 1.22; beta3m =  0.05; beta3p = 1.0
+          beta1 = 1.0; beta2 = 1.22; beta3_positiveN2 =  0.05; beta3_negativeN2 = 1.0
           OneOverSig = (/ 1.25, 0.9345 /)
        CASE DEFAULT
           print*,'Error in the definition of the closure scheme'
@@ -197,13 +198,13 @@ subroutine gls_stp_DG( Hz      ,      &            ! Cell thickness           [m
           ! Off-diagonal terms for the tridiagonal problem
           cff=-0.5*dt
           DO k=2,N-1
-             FC(k) = cff*OneOverSig(ig)*( Akv(k)+Akv(k-1) ) / Hz(k)
+             FC(k) = cff*OneOverSig(ig)*( Akm(k)+Akm(k-1) ) / Hz(k)
           ENDDO
 
           IF(Neu_bot) THEN
              FC(1) = 0.
           ELSE
-             FC(1) = cff*OneOverSig(ig)*( Akv(1)+Akv(0) ) / Hz(1)
+             FC(1) = cff*OneOverSig(ig)*( Akm(1)+Akm(0) ) / Hz(1)
           END IF
 
           FC(N)=0.    ! The Neumann condition is added afterwards via a term in RH(N-1)
@@ -215,13 +216,13 @@ subroutine gls_stp_DG( Hz      ,      &            ! Cell thickness           [m
              invG  =  ig1*invk+ig2*(1./gls)          ! invG = 1/tke for tke ; invG = 1/psi for gls     ! NEW : added the missing division by tke : ig1+ig2*(1./gls) => ig1*invk+ig2*(1./gls)
              cff1  =  ig1+ig2*beta1   * invk*gls     ! Coeff for P (shear production)
              cff2  = (ig1+ig2*beta2 ) * invk         ! Coeff for the dissipation
-             cff3m =  ig1+ig2*beta3m  * invk*gls     ! Coeff for G (buoyancy). Ex for k-eps : beta3m = -0.4
-             cff3p =  ig1+ig2*beta3p  * invk*gls     ! Coeff for G (buoyancy).                beta3p = 1. for all the schemes
+             cff3_positiveN2 =  ig1+ig2*beta3_positiveN2  * invk*gls     ! Coeff for G (buoyancy). Ex for k-eps : beta3_positiveN2 = -0.4
+             cff3_negativeN2 =  ig1+ig2*beta3_negativeN2  * invk*gls     ! Coeff for G (buoyancy).                beta3_negativeN2 = 1. for all the schemes
              ! Shear and buoyancy production
-             Sprod =  cff1*Akv(k) * shear2(k)
-             Bprod = - Akt(k,1)*( cff3m*MAX(bvf(k),0.) + cff3p*MIN(bvf(k),0.) )
-             ! for the tke equation: ( cff3m*MAX(bvf(k),0.) + cff3p*MIN(bvf(k),0.) ) = bvf(k), Bprod can be >0 or <0
-             ! for the gls equation: if N^2 > 0 => beta3m, if N^2 < 0 (instability) => beta3p. Bprod can be >0 or <0
+             Sprod =  cff1*Akm(k) * shear2(k)
+             Bprod = - Akt(k,1)*( cff3_positiveN2*MAX(bvf(k),0.) + cff3_negativeN2*MIN(bvf(k),0.) )
+             ! for the tke equation: ( cff3_positiveN2*MAX(bvf(k),0.) + cff3_negativeN2*MIN(bvf(k),0.) ) = bvf(k), Bprod can be >0 or <0
+             ! for the gls equation: if N^2 > 0 => beta3_positiveN2, if N^2 < 0 (instability) => beta3_negativeN2. Bprod can be >0 or <0
              ! Patankar trick to ensure non-negative solutions
              cff   =       0.5*(Hz(k)+Hz(k+1))
              IF( (Bprod + Sprod) .gt. 0.) THEN
@@ -309,7 +310,7 @@ subroutine gls_stp_DG( Hz      ,      &            ! Cell thickness           [m
 
          DO k=1,N-1
             !
-            ! Galperin limitation : l <= l_lim
+            ! Galperin limitation : l <= l_lim   (37 Umlauf2005)
             L_lim = galp * sqrt( 2.* trb(k,nnew,itke)) /        &
                                   ( sqrt(max(eps_bvf, bvf(k)))  )
             !
@@ -344,9 +345,9 @@ subroutine gls_stp_DG( Hz      ,      &            ! Cell thickness           [m
             c_mu(k)      = (sf_n0  +  sf_n1*alpha_n(k) +  sf_n2*alpha_m(k))/Denom
             c_mu_prime(k) = (sf_n0T + sf_n1T*alpha_n(k) + sf_n2T*alpha_m(k))/Denom
             !
-            ! Finalize the computation of Akv and Akt
+            ! Finalize the computation of Akm and Akt
             cff = trb( k,nnew,itke )**2 / epsilon
-            Akv(k  )= MAX( cff*c_mu(k)     ,nuwm )
+            Akm(k  )= MAX( cff*c_mu(k)     ,nuwm )
             Akt(k,1)= MAX( cff*c_mu_prime(k),nuws )
 
             Akt(k,2:ntra)= Akt(k,1)
