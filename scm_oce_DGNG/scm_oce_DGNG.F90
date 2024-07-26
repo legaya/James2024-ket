@@ -15,21 +15,22 @@ contains
                        v       ,        &            ! meridional velocity [m/s]
                        t       ,        &            ! active tracers [Celsius/PSU]
                        varT    ,        &            ! Temperature variance (mean of T'^2)  [Celsius^2]
+                       bvf     ,        &            ! Brunt-Vaisala frequency [s^-2]
                        turb    ,        &            ! GLS variables TKE + length scale (TKE : m2/s2)
                        lmix    ,        &            ! mixing length scale [m]
                        eps     ,        &            ! TKE dissipation [m2/s3]
                        rho0    ,        &            ! Reference constant density [kg/m3]
                        rho1    ,        &            ! Density perturbation [kg/m3]
-                       Akv     ,        &            ! Turbulent viscosity  [m2/s]
+                       Akm     ,        &            ! Turbulent viscosity  [m2/s]
                        Akt     ,        &            ! Turbulent diffusivity [m2/s]
-                       gamma_GLS,       &            ! "Possibly CounterGradient" term for tracers turbulent flux [m2/s]
+                       gamma_h,         &            ! Nongradient term for turbulent temperature flux [m2/s]
                        wx_NL_KPP,       &            ! KPP non local flux ([C m/s] or [psu m/s])
-                       c_mu    ,        &            ! Stability function for u,v (GLS), Coeff in the akv equation (TKE)
-                       c_mu_prime ,     &            ! Stability function for T,S (DownGradient part) (GLS), Coeff in the akt equation (TKE)
-                       c_mu_prime_star, &            ! Stability function for T,S ("Possibly CounterGradient" part, i.e. gamma) (for GLS only)
-                       alpha_n,         &            ! Relative to the stratification (Coeff in stability functions)
-                       alpha_m,         &            ! Relative to the shear of mean currents (Coeff in stability functions)
-                       alpha_v,         &            ! Relative to the temperature variance (Coeff in stability functions)
+                       fm      ,        &            ! Stability function for u,v (GLS), Coeff in the akm equation (TKE)
+                       fh      ,        &            ! Stability function for T (DownGradient part) (GLS), Coeff in the akt equation (TKE)
+                       fh_star ,        &            ! Stability function for T (Nongradient part) (for GLS only)
+                       alpha_n ,        &            ! Relative to the stratification (Coeff in stability functions)
+                       alpha_m ,        &            ! Relative to the shear of mean currents (Coeff in stability functions)
+                       alpha_bT,        &            ! Relative to the temperature variance (Coeff in stability functions)
                        r_D     ,        &            ! bottom drag (r_D = C_D |u1|)
                        sustr   ,        &            ! zonal wind stress [m2/s2 = (N/m2) / (kg/m3) ]
                        svstr   ,        &            ! meridional wind stress  [m2/s2 = (N/m2) / (kg/m3)]
@@ -79,20 +80,21 @@ contains
          real(8),dimension( 1:N, ntime      ), intent(inout) :: v
          real(8),dimension( 1:N, ntime, ntra), intent(inout) :: t
          real(8),dimension( 0:N, ntime      ), intent(inout) :: varT
-         real(8),dimension( 0:N             ), intent(inout) :: Akv
+         real(8),dimension( 0:N             ), intent(inout) :: bvf
+         real(8),dimension( 0:N             ), intent(inout) :: Akm
          real(8),dimension( 0:N, ntra       ), intent(inout) :: Akt
-         real(8),dimension( 0:N, ntra       ), intent(inout) :: gamma_GLS
+         real(8),dimension( 0:N             ), intent(inout) :: gamma_h
          real(8),dimension( 0:N, ntra       ), intent(inout) :: wx_NL_KPP
          real(8),dimension( 1:N             ), intent(inout) :: rho1
          real(8),dimension( 0:N, ntime, ngls), intent(inout) :: turb
          real(8),dimension( 0:N             ), intent(inout) :: lmix
          real(8),dimension( 0:N             ), intent(inout) :: eps
-         real(8),dimension( 0:N             ), intent(inout) :: c_mu
-         real(8),dimension( 0:N             ), intent(inout) :: c_mu_prime
-         real(8),dimension( 0:N             ), intent(inout) :: c_mu_prime_star
+         real(8),dimension( 0:N             ), intent(inout) :: fm
+         real(8),dimension( 0:N             ), intent(inout) :: fh
+         real(8),dimension( 0:N             ), intent(inout) :: fh_star
          real(8),dimension( 0:N             ), intent(inout) :: alpha_n
          real(8),dimension( 0:N             ), intent(inout) :: alpha_m
-         real(8),dimension( 0:N             ), intent(inout) :: alpha_v
+         real(8),dimension( 0:N             ), intent(inout) :: alpha_bT
          real(8),dimension( 1:N,ntra       ), intent(inout) :: delta
          real(8),dimension( 1:N       ), intent(in   ) :: unudge
          real(8),dimension( 1:N       ), intent(in   ) :: vnudge
@@ -102,32 +104,30 @@ contains
          real(8),dimension( 1:N      ), intent(in   ) ::  z_r
          real(8),dimension( 0:N      ), intent(in   ) ::  z_w
          real(8),dimension( 1:N      ), intent(in   ) ::  Hz
-         real(8),                       intent(inout) ::  hbls
+         real(8),                       intent(inout) ::  hbls, alpha
          real(8),                       intent(in   ) ::  sustr
          real(8),                       intent(in   ) ::  svstr
          real(8),                       intent(in   ) ::  srflx
          real(8),                       intent(in   ) ::  stflx1,stflx2
-         real(8),                       intent(in   ) ::  f,Ricr,dt,dpdx,rho0,alpha,T0,beta,S0
+         real(8),                       intent(in   ) ::  f,Ricr,dt,dpdx,rho0,T0,beta,S0
          real(8),                       intent(in   ) ::  r_D,zOb
   ! local variables
          integer                                      ::  k,itrc
          !logical                                      ::  check_inputs = .true.
-         real(8)                                      ::  bvf(0:N),dTdz(0:N),ghat(0:N),hbl_avg
-         real(8)                                      ::  sig,cff, cff1, cff2, cff3, flux_top
+         real(8)                                      ::  dTdz(0:N),ghat(0:N),hbl_avg
+         real(8)                                      ::  sig,cff, cff1, cff2, cff3, flux_top, gamma_h_temp
          real(8)                                      ::  FC(0:N), CF(0:N), Rz(1:N)
          real(8)                                      ::  FC_2    (1:N  )
          real(8)                                      ::  DC_2    (1:N-1)
          real(8)                                      ::  CF_2    (1:N-1)
          real(8)                                      ::  RH_2    (1:N-1)
          real(8)                                      ::  swr_frac(0:N),stflx(2)
-         real(8), parameter                           :: cp = 3985.0d0
+         real(8), parameter                           :: cp = 4000.0d0
          real(8), parameter :: nuwm =1.0e-4     !<-- minimum turbulent viscosity
          real(8), parameter :: nuws =0.1e-4     !<-- minimum turbulent diffusion
-         real(8), parameter :: cT=1.388889
          real(8), parameter ::  g   =  9.81
-         real(8),dimension( 0:N             )  :: Akv_tmp
+         real(8),dimension( 0:N             )  :: Akm_tmp
          real(8),dimension( 0:N, ntra       )  :: Akt_tmp
-         real(8), parameter ::  sigma_varT = 1.     ! K_varT = K_t / sigma_varT
 
          !+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
          IF( check_inputs ) THEN
@@ -158,31 +158,31 @@ contains
          IF(lin_eos) THEN
             call  rho_lin_eos    (N, rho1,bvf, t(:,nstp,1:2),z_r,rho0,alpha,T0,beta,S0)
          ELSE
-            call  rho_eos        (N, rho1,bvf, t(:,nstp,1:2),z_r,rho0 )
+            call  rho_eos        (N, rho1,bvf,alpha, t(:,nstp,1:2),z_r,rho0 )     ! gives density + returns alpha value relative to the surface (used in the non-gradient term)
          ENDIF
 
          SELECT CASE(trb_scheme)
          CASE(0)
-            call  lmd_vmix   (N, Akv ,Akt, u(:,nstp),v(:,nstp),rho1,bvf,z_r)
-            call  lmd_kpp    (N, Akv, Akt, hbls, u(:,nstp),v(:,nstp), t(:,nstp,:), bvf, &
+            call  lmd_vmix   (N, Akm ,Akt, u(:,nstp),v(:,nstp),rho1,bvf,z_r)
+            call  lmd_kpp    (N, Akm, Akt, hbls, u(:,nstp),v(:,nstp), t(:,nstp,:), bvf, &
                                    z_r,z_w,Hz,Ricr,f,sustr,svstr,srflx,stflx,rho0,swr_frac,ghat )
-            !call  lmd_bkpp   (N, Akv, Akt, hbls, u(:,nstp),v(:,nstp),bvf,z_r,z_w,Hz,Ricr,f,r_D,Zob)
-            gamma_GLS(0:N,:) = 0.d0
+            !call  lmd_bkpp   (N, Akm, Akt, hbls, u(:,nstp),v(:,nstp),bvf,z_r,z_w,Hz,Ricr,f,r_D,Zob)
+            gamma_h(0:N) = 0.d0
          CASE(4)
-            call  lmd_vmix   (N, Akv ,Akt, u(:,nstp),v(:,nstp),rho1,bvf,z_r)
-            call  lmd_kpp_LMD94    (N, Akv, Akt, hbls, u(:,nstp),v(:,nstp), t(:,nstp,:), bvf, rho1, &
+            call  lmd_vmix   (N, Akm ,Akt, u(:,nstp),v(:,nstp),rho1,bvf,z_r)
+            call  lmd_kpp_LMD94    (N, Akm, Akt, hbls, u(:,nstp),v(:,nstp), t(:,nstp,:), bvf, rho1, &
                                    z_r,z_w,Hz,Ricr,f,sustr,svstr,srflx,stflx,rho0,swr_frac,ghat,kt)
-            !call  lmd_bkpp_LMD94(N,Akv,Akt,hbls,u(:,nstp),v(:,nstp),bvf,rho0,rho1,z_r,z_w,Hz,Ricr,f,r_D,Zob)
-            gamma_GLS(0:N,:) = 0.d0
+            !call  lmd_bkpp_LMD94(N,Akm,Akt,hbls,u(:,nstp),v(:,nstp),bvf,rho0,rho1,z_r,z_w,Hz,Ricr,f,r_D,Zob)
+            gamma_h(0:N) = 0.d0
          CASE(5)
-            call  tke_stp(Hz,z_r,u,v,bvf,turb(:,:,1),turb(:,:,2),lmix,eps,Akv,Akt,c_mu,c_mu_prime,r_D,sustr,svstr,      &
+            call  tke_stp(Hz,z_r,u,v,bvf,turb(:,:,1),turb(:,:,2),lmix,eps,Akm,Akt,fm,fh,r_D,sustr,svstr,      &
                                           dt,Zob,Neu_bot,EVD,nstp,nnew,N,ntra,ngls,ntime)
             !remark: turb(:,:,2) = k/leps = eps/ceps/k**(1/2)
             ghat(0:N) = 0.d0
-            gamma_GLS(0:N,:) = 0.d0
+            gamma_h(0:N) = 0.d0
          CASE DEFAULT
-            call  gls_stp (Hz,u,v,varT,bvf,alpha,turb,lmix,eps,Akv,Akt,gamma_GLS,c_mu,c_mu_prime,c_mu_prime_star,        &
-                           alpha_n,alpha_m,alpha_v,r_D,sustr,svstr,trb_scheme,sfunc_opt,dt,Zob,Neu_bot,kt,nstp,        &
+            call  gls_stp (z_r,Hz,u,v,t,varT,bvf,alpha,turb,lmix,eps,Akm,Akt,gamma_h,fm,fh,fh_star,        &
+                           alpha_n,alpha_m,alpha_bT,r_D,sustr,svstr,trb_scheme,sfunc_opt,dt,Zob,Neu_bot,kt,nstp,        &
                            nnew,N,ntra,ngls,ntime)
 
             ghat(0:N) = 0.d0                                                      ! no non-local term for GLS
@@ -204,7 +204,7 @@ contains
                do k=N-1,1,-1
                  !FC(k)=srflx*swr_frac(k)-(stflx(1)-srflx)*ghat(k)    ! <-- penetration of solar heat flux + application NL KPP (signe initial)
                  FC(k)=srflx*swr_frac(k)+(stflx(1)-srflx)*ghat(k)     ! <-- penetration of solar heat flux + application NL KPP (signe que je pense etre le bon)
-                 FC(k)= FC(k) - gamma_GLS(k,1)       ! "-" sign for gamma_GLS because it is applied dz(gamma) and not -dz(gamma) in the dz(w theta) equation
+                 FC(k)= FC(k) - gamma_h(k)       ! "-" sign for gamma_h because it is applied dz(gamma) and not -dz(gamma) in the dz(w theta) equation
                  wx_NL_KPP(k,1)=-(stflx(1)-srflx)*ghat(k)
                enddo
             else
@@ -212,7 +212,6 @@ contains
                do k=N-1,1,-1
                    !FC(k)=-stflx(itrc)*ghat(k)   ! application NL KPP (signe initial)
                    FC(k)=+stflx(itrc)*ghat(k)    ! application NL KPP (signe que je pense etre le bon)
-                   FC(k)= FC(k) - gamma_GLS(k,itrc)       ! "-" sign for gamma_GLS because it is applied dz(gamma) and not -dz(gamma) in the dz(w theta) equation
                    wx_NL_KPP(k,2)=-stflx(itrc)*ghat(k)
                    !FC(k)=0.D0
                enddo
@@ -220,7 +219,8 @@ contains
   !
   ! Bottom flux
   !------
-            FC(0) = Akt(0,itrc)*dTdz_bot(itrc)  !<-- Neumann BC at the bottom     ! NEW : nuws => Akt(0,itrc)
+            Akt(0,itrc) = Akt(1,itrc)   ! the diffusion is sometimes not defined at the bottom of the domain (e.g. in KPP)
+            FC(0) = Akt(0,itrc)*dTdz_bot(itrc) - gamma_h(0)    !<-- Neumann BC at the bottom     ! NEW : nuws => Akt(0,itrc); and - gamma_h(0)
   !
   !  Lateral and vertical heat flux convergence due to 3D processes
   !-------
@@ -302,13 +302,13 @@ contains
   !
   ! Resolve tri-diagonal system
   !------
-          FC(1)=2.D0*dt*Akv(1)/(Hz(2)+Hz(1)) !<--     c(1)     ! system
+          FC(1)=2.D0*dt*Akm(1)/(Hz(2)+Hz(1)) !<--     c(1)     ! system
           cff=1./(Hz(1)+FC(1)+dt*r_D)        !<-- 1 / b(1) implicit bottom drag appears here
           CF(1)=cff*FC(1)                    !<-- q(1)
           u(1,nnew)=cff*u(1,nnew)
           v(1,nnew)=cff*v(1,nnew)
           do k=2,N-1
-            FC(k)=2.D0*dt*Akv(k)/(Hz(k+1)+Hz(k))
+            FC(k)=2.D0*dt*Akm(k)/(Hz(k+1)+Hz(k))
             cff=1.D0/(Hz(k)+FC(k)+FC(k-1)*(1.D0-CF(k-1)))
             CF(k)=cff*FC(k)
             u(k,nnew)=cff*(u(k,nnew)+FC(k-1)*u(k-1,nnew))
@@ -328,85 +328,16 @@ contains
          !+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
   !
   ! Compute hbls for diagnostics
-          Akv_tmp(:  ) = nuwm
+          Akm_tmp(:  ) = nuwm
           Akt_tmp(:,1) = nuws
           Akt_tmp(:,2) = nuws
           if (ntra>2) then
              Akt_tmp(:,2:ntra) = nuws
           endif
-          call  lmd_kpp_LMD94    (N, Akv_tmp, Akt_tmp, hbls, u(:,nstp),v(:,nstp), t(:,nstp,:), bvf, rho1, &
+          call  lmd_kpp_LMD94    (N, Akm_tmp, Akt_tmp, hbls, u(:,nstp),v(:,nstp), t(:,nstp,:), bvf, rho1, &
                                    z_r,z_w,Hz,0.25,f,sustr,svstr,srflx,stflx,rho0,swr_frac,ghat,kt)
   !
 
-
-  !
-  ! Solving the temperature variance equation
-  !------
-
-            do k=1,N-1
-              cff    = 1./(z_r(k+1)-z_r(k))
-              dTdz(k) = cff*(t(k+1,nnew,1)-t(k,nnew,1))  ! dTdz
-            enddo
-            dTdz(0) = 0.   !not used for the moment
-            dTdz(N) = dTdz(N-1)
-
-            ! cf P215 lab notebook for the definition of FC_2, RH_2, DC_2 and CF_2
-            cff=-0.5*dt
-            DO k=1,N-1
-               FC_2(k) = cff*( Akv(k)+Akv(k-1) ) / (Hz(k)*sigma_varT)
-            ENDDO
-
-            FC_2(N)=0.   ! The Neumann condition is added afterwards via a term in RH_2(N-1)
-
-            DO k=1,N-1
-               cff   =       0.5*(Hz(k)+Hz(k+1))
-               IF( (dTdz(k)) .gt. 0.) THEN
-                 RH_2(k) = cff*( varT(k,nstp) + dt*2*Akt(k,1)*(dTdz(k))**2)
-                 DC_2(k) = cff*(1. + 2.*dt*(g * alpha)*c_mu_prime_star(k)*turb(k,nnew,1)/eps(k)*dTdz(k) &
-                                 + 2.*dt/cT * eps(k)/turb(k,nnew,1))                                &
-                         -FC_2(k)-FC_2(k+1)
-               ELSE
-                 RH_2(k) = cff*( varT(k,nstp) + dt*2*Akt(k,1)*(dTdz(k))**2  &
-                           - 2.*dt*(g * alpha)*c_mu_prime_star(k)*turb(k,nnew,1)/eps(k)*dTdz(k)*varT(k,nstp))
-                 DC_2(k) = cff*(1. + 2.*dt/cT * eps(k)/turb(k,nnew,1)) - FC_2(k)-FC_2(k+1)
-
-               ENDIF
-
-            ENDDO
-
-            flux_top     = 0.    ! Neumann condition at the surface
-            RH_2(N-1 ) = RH_2(N-1) + dt*flux_top
-            varT(0,nnew) = 0.    ! Dirichlet condition at the bottom
-
-            ! tridiagonal resolution
-            cff       =  1./DC_2(N-1)
-            CF_2(N-1) = cff*FC_2(N-1)
-            RH_2(N-1) = cff*RH_2(N-1)
-
-            DO k=N-2,1,-1
-               cff   =   1./(DC_2(k)-CF_2(k+1)*FC_2(k+1))
-               CF_2(k) = cff*FC_2(k)
-               RH_2(k) = cff*( RH_2(k)-FC_2(k+1)*RH_2(k+1))
-            ENDDO
-
-            varT(1,nnew) = RH_2(1)
-
-            DO k=2,N-1
-               RH_2(k) = RH_2(k)-CF_2(k)*RH_2(k-1)
-               varT(k,nnew) = RH_2(k)
-            ENDDO
-
-            ! IF( stflx1 .gt. 0.) THEN
-            !   varT(N,nnew) = 1./(1. + 2.*dt/cT * eps(N)/turb(N,nnew,1) + dt*(Akv(N)+Akv(N-1))/2./Hz(N)/sigma_varT)      &
-            !                 * (varT(N,nstp) + 2.*dt/Akt(N,1)*(-stflx1)**2                                               &
-            !                    - 2.*(-stflx1)*dt*(g * alpha)/turb(N,nnew,1)*c_mu_prime_star(N)/c_mu_prime(N)            &
-            !                    + dt*(Akv(N)+Akv(N-1))/2./Hz(N)/sigma_varT*varT(N-1,nnew) )
-            ! ELSE
-            !   varT(N,nnew) = 1./(1. + 2.*dt*(-stflx1)*(g * alpha)/turb(N,nnew,1)*c_mu_prime_star(N)/c_mu_prime(N)       &
-            !                         + 2.*dt/cT * eps(N)/turb(N,nnew,1) + dt*(Akv(N)+Akv(N-1))/2./Hz(N)/sigma_varT)      &
-            !                 * (varT(N,nstp) + 2.*dt/Akt(N,1)*(-stflx1)**2 + dt*(Akv(N)+Akv(N-1))/2./Hz(N)/sigma_varT*varT(N-1,nnew))
-            !
-            ! ENDIF
 
          return
   !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
@@ -423,79 +354,67 @@ contains
 
 
 
-  !===================================================================================================
-         SUBROUTINE rho_eos (N,rho1,bvf,t,z_r,rho0)
-  !---------------------------------------------------------------------------------------------------
-        implicit none
-  !
-  !-- Equation Of State variables to compute oceanic density ------------------------------------
-  !
-        integer, intent(in   )                   :: N
-        real(8), intent(  out)                   :: bvf (0:N)
-        real(8), intent(  out)                   :: rho1(1:N)
-        real(8), intent(in   )                   :: t  (1:N,2)
-        real(8), intent(in   )                   :: z_r(1:N  )
-        real(8), intent(in   )                   :: rho0
-  ! local variables
-        real(8)                                  :: Ts,Tt,sqrtTs
-        integer                                  :: k
-        real(8)                                  :: K0(N),K1(N),K2(N)
-        real(8)                                  :: r0, cff
-        real(8) A00, A01, A02, A03, A04, A10, A11, A12, A13
-        real(8) AS0, AS1, AS2, B00, B01, B02, B03, B10, B11
-        real(8) B12, BS1, E00, E01, E02, E10, E11, E12
-        real(8) QR , Q01, Q02, Q03, Q04, Q05, Q10, Q11
-        real(8) Q12, Q13, Q14, QS0, QS1, QS2, Q20
-        real(8), parameter                       :: g=9.81
-  ! parameter values
-        parameter(A00=+19092.56 ,  A01=+209.8925   , A02=-3.041638,     &
-                 A03=-1.852732e-3, A04=-1.361629e-5, A10=104.4077  ,    &
-                 A11=-6.500517   , A12=+0.1553190  , A13=2.326469e-4,   &
-                 AS0=-5.587545   , AS1=+0.7390729  , AS2=-1.909078e-2,  &
-                 B00=+4.721788e-1, B01=+1.028859e-2, B02=-2.512549e-4,  &
-                 B03=-5.939910e-7, B10=-1.571896e-2, B11=-2.598241e-4,  &
-                 B12=+7.267926e-6, BS1=+2.042967e-3,                    &
-                 E00=+1.045941e-5, E01=-5.782165e-10,E02=+1.296821e-7,  &
-                 E10=-2.595994e-7, E11=-1.248266e-9, E12=-3.508914e-9)
-        parameter(QR=+999.842594 , Q01=+6.793952e-2, Q02=-9.095290e-3,  &
-                 Q03=+1.001685e-4, Q04=-1.120083e-6, Q05=+6.536332e-9,  &
-                 Q10=+0.824493   , Q11=-4.08990e-3 , Q12=+7.64380e-5,   &
-                 Q13=-8.24670e-7 , Q14=+5.38750e-9 , QS0=-5.72466e-3,   &
-                 QS1=+1.02270e-4 , QS2=-1.65460e-6 , Q20=+4.8314e-4)
-  !---------------------------------------------------------------------------------------------------
-        r0 = QR-1000.d0
-  ! Compute density anomaly via Equation Of State (EOS) for seawater
-  !-------
-        do k=1,N
-  !----
-          Tt       = t(k,1)
-          Ts       = t(k,2)
+
+    !===================================================================================================
+           SUBROUTINE rho_eos (N,rho1,bvf,alpha,t,z_r,rho0)
+    !---------------------------------------------------------------------------------------------------
+          implicit none
+    !
+    !-- Equation Of State variables to compute oceanic density ------------------------------------
+    !
+          integer, intent(in   )                   :: N
+          real(8), intent(  out)                   :: bvf (0:N)
+          real(8), intent(  out)                   :: rho1(1:N)
+          real(8), intent(  out)                   :: alpha
+          real(8), intent(in   )                   :: t  (1:N,2)
+          real(8), intent(in   )                   :: z_r(1:N  )
+          real(8), intent(in   )                   :: rho0
+    ! local variables
+          real(8)                                  :: Ts,Tt,sqrtTs
+          integer                                  :: k
+          real(8)                                  :: r0, cff
+          real(8) QR , Q01, Q02, Q03, Q04, Q05, Q10, Q11
+          real(8) Q12, Q13, Q14, QS0, QS1, QS2, Q20
+          real(8), parameter                       :: g=9.81
+    ! parameter values
+          parameter(QR=+999.842594 , Q01=+6.793952e-2, Q02=-9.095290e-3,  &
+                   Q03=+1.001685e-4, Q04=-1.120083e-6, Q05=+6.536332e-9,  &
+                   Q10=+0.824493   , Q11=-4.08990e-3 , Q12=+7.64380e-5,   &
+                   Q13=-8.24670e-7 , Q14=+5.38750e-9 , QS0=-5.72466e-3,   &
+                   QS1=+1.02270e-4 , QS2=-1.65460e-6 , Q20=+4.8314e-4)
+    !---------------------------------------------------------------------------------------------------
+          r0 = QR-1000.d0
+    ! Compute density anomaly via Equation Of State (EOS) for seawater
+    !-------
+          do k=1,N
+    !----
+            Tt       = t(k,1)
+            Ts       = t(k,2)
+            sqrtTs   = sqrt(Ts)
+
+            rho1(k) =   r0+Tt*(Q01+Tt*(Q02+Tt*(Q03+Tt*(Q04+Tt*Q05))))      &
+                           +Ts*(Q10+Tt*(Q11+Tt*(Q12+Tt*(Q13+Tt*Q14)))      &
+                                +sqrtTs*(QS0+Tt*(QS1+Tt*QS2))+Ts*Q20)
+    !----
+          enddo
+    !----
+          do k=1,N-1
+            cff    = 1./(z_r(k+1)-z_r(k))
+            bvf(k) = -cff*(g/rho0)*(rho1(k+1)-rho1(k))  ! Brunt-Vaisala frequency
+          enddo
+          bvf(0) = bvf(1  )
+          bvf(N) = bvf(N-1)
+
+          Tt       = t(N,1)    ! surface temperature
+          Ts       = t(N,2)    ! surface salinity
           sqrtTs   = sqrt(Ts)
+          alpha = -1./rho0 * (Q01+Tt*(2.*Q02+Tt*(3.*Q03+Tt*(4.*Q04+Tt*5.*Q05))) &   ! thermal dilatation coefficient
+                             +Ts*(Q11+Tt*(2.*Q12+Tt*(3.*Q13+Tt*4.*Q14))         &
+                                 +sqrtTs*(QS1+Tt*2.*QS2)))
 
-          K0(k)    =    A00+Tt*(A01+Tt*(A02+Tt*(A03+Tt*A04)))            &
-                  + Ts*( A10+Tt*(A11+Tt*(A12+Tt*A13))+sqrtTs*(          &
-                                      AS0+Tt*(AS1+Tt*AS2) ))
-
-          K1(k)   =    B00+Tt*(B01+Tt*(B02+Tt*B03))+Ts*( B10            &
-                  +    Tt*(B11+Tt*B12)+sqrtTs*BS1)
-
-          K2(k)   =    E00+Tt*(E01+Tt*E02)+Ts*(E10+Tt*(E11+Tt*E12))
-
-          rho1(k) =   r0+Tt*(Q01+Tt*(Q02+Tt*(Q03+Tt*(Q04+Tt*Q05))))      &
-                         +Ts*(Q10+Tt*(Q11+Tt*(Q12+Tt*(Q13+Tt*Q14)))      &
-                              +sqrtTs*(QS0+Tt*(QS1+Tt*QS2))+Ts*Q20)
-  !----
-      enddo
-  !----
-      do k=1,N-1
-          cff    = 1./(z_r(k+1)-z_r(k))
-          bvf(k) = -cff*(g/rho0)*(rho1(k+1)-rho1(k))  ! Brunt-Vaisala frequency
-      enddo
-      bvf(0) = bvf(1  )
-      bvf(N) = bvf(N-1)
-  !---------------------------------------------------------------------------------------------------
-  END SUBROUTINE rho_eos
-  !===================================================================================================
+    !---------------------------------------------------------------------------------------------------
+    END SUBROUTINE rho_eos
+    !===================================================================================================
 
 
   !===================================================================================================
@@ -522,7 +441,8 @@ contains
   !-------
         do k=1,N
   !----
-           rho1(k)= rho0*( 1. - Tcoef*( t(k,1) - T0 ) + Scoef*( t(k,2) - S0 ))
+           !rho1(k)= rho0*( 1. - Tcoef*( t(k,1) - T0 ) + Scoef*( t(k,2) - S0 ))
+           rho1(k)= rho0*( 1. - Tcoef*( t(k,1) - T0 ) + Scoef*( t(k,2) - S0 )) -1000.d0   ! NEW: for really defining the density anomaly
   !----
       enddo
   !----
@@ -585,7 +505,7 @@ contains
         r1(4)=0.77     ! r2=1-r1);
         r1(5)=0.78
                        ! set Jerlov water type to assign everywhere
-        Jwt=1          ! (an integer from 1 to 5).
+        Jwt=3          ! (an integer from 1 to 5).
 
         attn1=-1./mu1(Jwt)
         attn2=-1./mu2(Jwt)
@@ -636,7 +556,7 @@ contains
         real(8),intent(out) :: sustr,svstr,srflx
         real(8),intent(out) :: stflx1,stflx2
         real(8)             :: td,cff2,cff,dqdt,tdays
-        real(8),parameter   :: cp = 3985.0d0
+        real(8),parameter   :: cp = 4000.0d0
         integer             :: kt,k1,k2
 
 
