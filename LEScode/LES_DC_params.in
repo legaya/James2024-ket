@@ -1,0 +1,33 @@
+#!sh
+# input parameter files
+# each '=' sign must be surrounded by at least one whitespace on each side
+
+# domain size
+N  = 512
+L0 =  100
+npz = 8  # 2048 procs
+
+# run Van Roekel
+tau0 = 0.
+N2b = 2e-5
+B0 = -3.68e-8
+B1 = 1.15e-7
+T1 = 86400
+
+tol_solver = 1e-4
+
+f0_z = 1e-4
+f0_y = 0.
+hm_i = 0
+
+# timestepping
+CFL   = 0.6
+DT    = 5.0
+tend  = 864000
+dtout = 7200
+tel_m = 1e10       # max elapsed time
+NMOUT = 50000
+
+# misc
+tol_b = 5e-4
+tol_u = 2e-1
