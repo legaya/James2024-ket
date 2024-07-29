@@ -10,6 +10,11 @@ CC99='mpicc -std=c99' qcc -D_MPI=1  -D_NETCDF=1 -grid=multigrid3D -lm -lpnetcdf 
 
 HPC:
 qcc -D_MPI=1  -D_NETCDF=1 -grid=multigrid3D -source convection.c
+
+
+create a restart file:
+ncks -d time,-1,-1 vars.nc restart.nc
+
 */
 
 
@@ -17,10 +22,11 @@ double nu = 0.;
 //double kappa = 1.e-5;
 double N2b = 0.;  // background stratification
 double B0 = 0.;   // surface buoyancy flux
+double B1 = 0.;   // diurnal cycle
 double tau0 = 0.; // surface stress
 double hm_i = 0.; // initial mixed layer thickness
 
-
+double T1 = 1.0; // periodicity of the forcing
 
 int NMOUT = 5000;
 int N0; // bug in restore
@@ -28,13 +34,35 @@ double tend = 1.;
 double dtout = 1.;
 double tout0 = 0;
 char dpath[80]  = "./";
-double tol_b = 0;
+double tol_solver = 1e-3 [*];
 double tol_u = 0;
 timer tel;
 double tel_m = 1e10;
 int npt = 0;
 double nu0;
 double b_noise = 1e-3;
+
+/**
+   mu1 and mu2
+
+ reciprocal of the absorption coefficient for each of the two solar wavelength
+ bands as a function of Jerlov water type (Paulson and Simpson, 1977)
+ [dimensioned as length, meter
+
+r1: 
+
+fraction of the total radiance for wavelength band 1 as a function of Jerlov
+ water type (fraction for band 2 is always r2=1-r1);
+
+Jwt: Jerlow water type (an integer from 1 to 5).
+
+*/
+double mu1[5] = {0.35, 0.6, 1.0, 1.5, 1.4};
+double mu2[5] = {23.0, 20.0, 17.0, 14.0, 7.9};
+double r1[5]  = {0.58, 0.62, 0.67, 0.77, 0.78};
+int Jwt = 3;
+// C arrays starts at 0
+#define Jwt1 ((Jwt - 1))
 
 // domain
 int npz = 0;
@@ -45,7 +73,7 @@ int npz = 0;
 #include "../libs/extra.h"
 #include "navier-stokes/centered.h"
 #include "../libs/boussinesq.h"
-#include "coriolis3d.h"
+#include "../libs/coriolis3d.h"
 #include "auxiliar_input.h"
 #if _NETCDF
 #include "pnetcdf_bas.h"
@@ -66,6 +94,9 @@ int main(int argc,char* argv[]) {
   add_param ("b_noise", &b_noise, "double");
   add_param ("N2b", &N2b, "double");
   add_param ("B0", &B0, "double");
+  add_param ("B1", &B1, "double");
+  add_param ("T1", &T1, "double");
+  add_param ("Jwt", &Jwt, "int");
   add_param ("tau0", &tau0, "double");
   add_param ("hm_i", &hm_i, "double");
   add_param ("f0_x", &f0_x, "double");
@@ -78,6 +109,7 @@ int main(int argc,char* argv[]) {
   add_param ("dtout", &dtout, "double");
   add_param ("tout0", &tout0, "double");
   add_param ("NMOUT", &NMOUT, "int");
+  add_param ("tol_solver", &tol_solver, "double");
 
   // origin
   X0 = 0;
@@ -99,7 +131,7 @@ int main(int argc,char* argv[]) {
   backup_config(file_param);
   
 
-  //TOLERANCE = 1e-4;
+  TOLERANCE = tol_solver;
   periodic(right);
 #if dimension > 2
   periodic(top);
@@ -161,6 +193,14 @@ event init (t=0) {
   }
   N = N0; // restore function changes N
 
+#if _NETCDF
+  FILE * fp;
+  if ((fp = fopen("restart.nc", "r"))) {
+    read_nc({b,u}, "restart.nc");
+    fclose(fp);
+  }
+#endif
+
 
 //#define WAVES (-1*0.5*(1-sin(8*2*pi*x/L0)) - y - 1.4987654321*L0/N)
 #define WAVES (-0.5*(-0.5+sin(8*2*pi*x/L0-sqrt(tau0)*t/L0)) - y)
@@ -203,9 +243,11 @@ event init (t=0) {
 /**
    Surface forcing (buoyancy flux)
 */
+
 // trying this formulation instead of specification of neumann BC so that it is
 // independent of nu
 event surface_fluxes (i++) {
+
 #if dimension > 2
   foreach_boundary(front) {
 #else
@@ -215,6 +257,33 @@ event surface_fluxes (i++) {
 //    b[]   += dt*q0/Delta;
 //    u.x[] += dt*tau0/Delta;
   }
+
+  double sw_tot = B1*max(cos(2*pi*(t/T1 - 0.5)), 0.0) ;
+
+/**
+   convention that z=0 at the surface
+ */
+
+  foreach() {
+#if dimension > 2
+    // upper absorbsion
+    double sw_frac1 = r1[Jwt1]*exp((z+0.5*Delta)/mu1[Jwt1]) 
+      + (1. - r1[Jwt1])*exp((z+0.5*Delta)/mu2[Jwt1]);
+    // lower absorbsion
+    double sw_frac2 = r1[Jwt1]*exp((z-0.5*Delta)/mu1[Jwt1]) 
+      + (1. - r1[Jwt1])*exp((z-0.5*Delta)/mu2[Jwt1]);
+#else // same with y instead of z
+    // upper absorbsion
+    double sw_frac1 = r1[Jwt1]*exp((y+0.5*Delta)/mu1[Jwt1]) 
+      + (1. - r1[Jwt1])*exp((y+0.5*Delta)/mu2[Jwt1]);
+    // lower absorbsion
+    double sw_frac2 = r1[Jwt1]*exp((y-0.5*Delta)/mu1[Jwt1]) 
+      + (1. - r1[Jwt1])*exp((y-0.5*Delta)/mu2[Jwt1]);
+#endif
+    // divergence of the flux
+    b[]   += dt*sw_tot*(sw_frac1 - sw_frac2)/Delta;
+  }
+
 }
 
 /**
@@ -263,45 +332,7 @@ event output (t = tout0; t <= tend+1e-10;  t += dtout) {
   fprintf (stdout,"i = %d, dt = %g, t = %g, ke = %.2e, vd = %.2e\n",
            i, dt, t, ket, vd);
 
-  if (N < NMOUT){
-#if _NETCDF
-    write_nc();
-#else
-    char name[100];
-    sprintf (name,"%silast.dat", dpath);
-    FILE * fp = fopen (name, "w");
-    fprintf(fp,"%d",i);
-    fclose(fp);
-  
-    sprintf (name,"%sb%09d.bas", dpath, i);
-    fp = fopen (name, "w");
-    output_matrixl ({b}, fp, linear = true);
-    fclose(fp);
-  
-    sprintf (name,"%su%09d.bas", dpath, i);
-    fp = fopen (name, "w");
-    output_matrixl ((scalar *) {u}, fp, linear = true);
-    fclose(fp);
-  
-#if TREE
-    if (tol_b || tol_u) {
-      scalar l[];
-      foreach()
-        l[] = level;
-      boundary({l});
-      sprintf (name,"%slevel%09d.bas", dpath, i);
-      fp = fopen (name, "w");
-      output_matrixl ({l}, fp, linear = true);
-      fclose(fp);
-    }
-#endif
-#endif
-  } else {
-    char name[100];
-    sprintf (name, "%soutput-%09d", dpath, i);
-    fprintf(stdout,name);
-    dump (name);
-  }
+  write_nc();
 
 }
 
